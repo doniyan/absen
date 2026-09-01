@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Absensi Faceprint</title>
+<style>
+  body { font-family: Arial, sans-serif; text-align: center; background: #0f1b2b; color: #fff; margin:0; padding:20px;}
+  h2 { color: #f2c14e; }
+  video { border-radius: 12px; border: 3px solid #2a9d8f; width: 320px; max-width: 90vw; }
+  .card { background:#16283d; padding:20px; border-radius:16px; max-width:380px; margin:15px auto; }
+  button { background:#2a9d8f; color:#fff; border:none; padding:10px 18px; border-radius:8px; font-size:15px; margin:6px; cursor:pointer; }
+  input { padding:8px; border-radius:6px; border:none; width:80%; margin-bottom:8px;}
+  #status, #statusDaftar { font-size:18px; margin-top:10px; min-height:24px; }
+  .tab-btn { background:#0f1b2b; border:1px solid #f2c14e; color:#f2c14e; }
+  .tab-btn.active { background:#f2c14e; color:#0f1b2b; }
+</style>
+</head>
+<body>
+
+<h2>🕒 Absensi Faceprint</h2>
+<div>
+  <button class="tab-btn active" id="btn-absen" onclick="showTab('absen')">Absen</button>
+  <button class="tab-btn" id="btn-daftar" onclick="showTab('daftar')">Daftar Karyawan Baru</button>
+</div>
+
+<div class="card" id="tab-absen">
+  <video id="video" width="320" height="240" autoplay muted playsinline></video>
+  <div id="status">Memuat...</div>
+</div>
+
+<div class="card" id="tab-daftar" style="display:none">
+  <video id="video2" width="320" height="240" autoplay muted playsinline></video>
+  <br>
+  <input id="namaBaru" placeholder="Nama Karyawan">
+  <br>
+  <button onclick="daftarWajah()">Ambil & Simpan Wajah</button>
+  <div id="statusDaftar"></div>
+</div>
+
+<script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
+<script>
+// GANTI dengan URL Web App GAS kamu (diakhiri /exec)
+const API_URL = 'https://script.google.com/macros/s/AKfycbwOaYDkJOTj8PzAVIP8hIyxU6ZVVqkymQAsRsUxKzo1h8II3Uh_4CARBeuurvqzxdSLYw/exec';
+
+let karyawanList = [];
+let modelReady = false;
+let posisiSekarang = null;
+
+function showTab(tab) {
+  document.getElementById('tab-absen').style.display = tab === 'absen' ? 'block' : 'none';
+  document.getElementById('tab-daftar').style.display = tab === 'daftar' ? 'block' : 'none';
+  document.getElementById('btn-absen').classList.toggle('active', tab === 'absen');
+  document.getElementById('btn-daftar').classList.toggle('active', tab === 'daftar');
+  if (tab === 'daftar') startCamera('video2');
+}
+
+function startCamera(videoId) {
+  const video = document.getElementById(videoId);
+  if (video.srcObject) return;
+  navigator.mediaDevices.getUserMedia({ video: {} }).then(stream => {
+    video.srcObject = stream;
+  }).catch(err => {
+    document.getElementById('status').innerText = 'Gagal akses kamera: ' + err.message;
+  });
+}
+
+function pantauLokasi() {
+  if (!navigator.geolocation) {
+    document.getElementById('status').innerText = 'Browser tidak mendukung GPS';
+    return;
+  }
+  navigator.geolocation.watchPosition(pos => {
+    posisiSekarang = { lat: pos.coords.latitude, lng: pos.coords.longitude };
+  }, () => {
+    document.getElementById('status').innerText = 'Izinkan akses lokasi untuk absen';
+  }, { enableHighAccuracy: true });
+}
+
+async function init() {
+  startCamera('video'); // nyalakan kamera duluan
+  document.getElementById('status').innerText = 'Memuat model pengenalan wajah...';
+
+  const MODEL_URL = 'https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/weights';
+  await Promise.all([
+    faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
+    faceapi.nets.faceLandmark68Net.loadFromUri(MODEL_URL),
+    faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
+  ]);
+  modelReady = true;
+
+  document.getElementById('status').innerText = 'Memuat data karyawan...';
+  const res = await fetch(API_URL + '?action=getKaryawan');
+  karyawanList = await res.json();
+
+  document.getElementById('status').innerText = 'Arahkan wajah ke kamera...';
+  pantauLokasi();
+  loopAbsen();
+}
+
+function loopAbsen() {
+  const video = document.getElementById('video');
+  setInterval(async () => {
+    if (!modelReady || video.readyState !== 4) return;
+    const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+      .withFaceLandmarks().withFaceDescriptor();
+    if (!detection) return;
+
+    let bestMatch = null, bestDist = 0.5;
+    karyawanList.forEach(k => {
+      const dist = faceapi.euclideanDistance(detection.descriptor, k.deskriptor);
+      if (dist < bestDist) { bestDist = dist; bestMatch = k; }
+    });
+
+    if (!bestMatch) {
+      document.getElementById('status').innerText = 'Wajah tidak dikenali';
+      return;
+    }
+    if (!posisiSekarang) {
+      document.getElementById('status').innerText = 'Menunggu sinyal GPS...';
+      return;
+    }
+
+    document.getElementById('status').innerText = 'Terdeteksi: ' + bestMatch.nama + ', menyimpan...';
+    // Catatan: dikirim sebagai text/plain agar tidak kena CORS preflight dari Apps Script
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({
+        action: 'absensi', id: bestMatch.id, nama: bestMatch.nama,
+        lat: posisiSekarang.lat, lng: posisiSekarang.lng
+      })
+    });
+    const hasil = await res.json();
+    document.getElementById('status').innerText = hasil.status === 'gagal'
+      ? '❌ ' + hasil.pesan
+      : `${bestMatch.nama} - ${hasil.jenis} (${hasil.waktu})`;
+  }, 3000);
+}
+
+async function daftarWajah() {
+  const nama = document.getElementById('namaBaru').value.trim();
+  if (!nama) { alert('Isi nama dulu'); return; }
+  const video = document.getElementById('video2');
+  document.getElementById('statusDaftar').innerText = 'Mendeteksi wajah...';
+
+  const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+    .withFaceLandmarks().withFaceDescriptor();
+
+  if (!detection) {
+    document.getElementById('statusDaftar').innerText = 'Wajah tidak terdeteksi, coba lagi.';
+    return;
+  }
+
+  const deskriptorArray = Array.from(detection.descriptor);
+  const res = await fetch(API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain' },
+    body: JSON.stringify({ action: 'daftar', nama: nama, deskriptor: deskriptorArray })
+  });
+  const hasil = await res.json();
+  document.getElementById('statusDaftar').innerText = 'Berhasil daftar: ' + hasil.nama;
+  document.getElementById('namaBaru').value = '';
+}
+
+window.onload = init;
+</script>
+</body>
+</html>
