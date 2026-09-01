@@ -52,7 +52,21 @@ function showTab(tab) {
   document.getElementById('tab-daftar').style.display = tab === 'daftar' ? 'block' : 'none';
   document.getElementById('btn-absen').classList.toggle('active', tab === 'absen');
   document.getElementById('btn-daftar').classList.toggle('active', tab === 'daftar');
-  if (tab === 'daftar') startCamera('video2');
+  if (tab === 'daftar') {
+    startCamera('video2');
+    loopPreviewDaftar();
+  }
+}
+
+let previewInterval = null;
+function loopPreviewDaftar() {
+  if (previewInterval) return; // sudah jalan, jangan dobel
+  const video = document.getElementById('video2');
+  previewInterval = setInterval(async () => {
+    if (!modelReady || video.readyState !== 4) return;
+    const d = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.5 }));
+    document.getElementById('statusDaftar').innerText = d ? '✅ Wajah terdeteksi, siap disimpan' : 'Cari posisi wajah yang jelas...';
+  }, 700);
 }
 
 function startCamera(videoId) {
@@ -90,6 +104,13 @@ async function init() {
     faceapi.nets.faceRecognitionNet.loadFromUri(MODEL_URL)
   ]);
   modelReady = true;
+
+  // "Pemanasan" - panggilan deteksi pertama di HP selalu lambat karena mesin AI
+  // baru menyiapkan komponen internal. Lakukan sekali di awal secara diam-diam
+  // supaya deteksi berikutnya (termasuk di tab Daftar Karyawan) terasa cepat.
+  try {
+    await faceapi.detectSingleFace(document.getElementById('video'), new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.5 }));
+  } catch (e) {}
 
   document.getElementById('status').innerText = 'Memuat data karyawan...';
   const res = await fetch(API_URL + '?action=getKaryawan');
