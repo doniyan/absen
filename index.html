@@ -41,7 +41,7 @@
 <script src="https://cdn.jsdelivr.net/npm/face-api.js@0.22.2/dist/face-api.min.js"></script>
 <script>
 // GANTI dengan URL Web App GAS kamu (diakhiri /exec)
-const API_URL = 'https://script.google.com/macros/s/AKfycbwOaYDkJOTj8PzAVIP8hIyxU6ZVVqkymQAsRsUxKzo1h8II3Uh_4CARBeuurvqzxdSLYw/exec';
+const API_URL = 'https://script.google.com/macros/s/GANTI_DENGAN_ID_DEPLOYMENT/exec';
 
 let karyawanList = [];
 let modelReady = false;
@@ -58,7 +58,9 @@ function showTab(tab) {
 function startCamera(videoId) {
   const video = document.getElementById(videoId);
   if (video.srcObject) return;
-  navigator.mediaDevices.getUserMedia({ video: {} }).then(stream => {
+  navigator.mediaDevices.getUserMedia({
+    video: { width: { ideal: 320 }, height: { ideal: 240 }, facingMode: 'user' }
+  }).then(stream => {
     video.srcObject = stream;
   }).catch(err => {
     document.getElementById('status').innerText = 'Gagal akses kamera: ' + err.message;
@@ -102,7 +104,7 @@ function loopAbsen() {
   const video = document.getElementById('video');
   setInterval(async () => {
     if (!modelReady || video.readyState !== 4) return;
-    const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+    const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.5 }))
       .withFaceLandmarks().withFaceDescriptor();
     if (!detection) return;
 
@@ -144,7 +146,7 @@ async function daftarWajah() {
   const video = document.getElementById('video2');
   document.getElementById('statusDaftar').innerText = 'Mendeteksi wajah...';
 
-  const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions())
+  const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.5 }))
     .withFaceLandmarks().withFaceDescriptor();
 
   if (!detection) {
