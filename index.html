@@ -53,7 +53,7 @@ function showTab(tab) {
   document.getElementById('btn-absen').classList.toggle('active', tab === 'absen');
   document.getElementById('btn-daftar').classList.toggle('active', tab === 'daftar');
   if (tab === 'daftar') {
-    startCamera('video2');
+    startCamera('video2'); // instan, karena sharedStream sudah aktif sejak awal
     loopPreviewDaftar();
   }
 }
@@ -69,16 +69,20 @@ function loopPreviewDaftar() {
   }, 700);
 }
 
-function startCamera(videoId) {
+let sharedStream = null;
+async function startCamera(videoId) {
   const video = document.getElementById(videoId);
   if (video.srcObject) return;
-  navigator.mediaDevices.getUserMedia({
-    video: { width: { ideal: 320 }, height: { ideal: 240 }, facingMode: 'user' }
-  }).then(stream => {
-    video.srcObject = stream;
-  }).catch(err => {
+  try {
+    if (!sharedStream) {
+      sharedStream = await navigator.mediaDevices.getUserMedia({
+        video: { width: { ideal: 320 }, height: { ideal: 240 }, facingMode: 'user' }
+      });
+    }
+    video.srcObject = sharedStream;
+  } catch (err) {
     document.getElementById('status').innerText = 'Gagal akses kamera: ' + err.message;
-  });
+  }
 }
 
 function pantauLokasi() {
