@@ -60,7 +60,7 @@ function showTab(tab) {
 
 let previewInterval = null;
 function loopPreviewDaftar() {
-  if (previewInterval) return; // sudah jalan, jangan dobel
+  if (previewInterval) clearInterval(previewInterval);
   const video = document.getElementById('video2');
   previewInterval = setInterval(async () => {
     if (!modelReady || video.readyState !== 4) return;
@@ -169,25 +169,39 @@ async function daftarWajah() {
   const nama = document.getElementById('namaBaru').value.trim();
   if (!nama) { alert('Isi nama dulu'); return; }
   const video = document.getElementById('video2');
+
+  // Hentikan live preview dulu supaya tidak rebutan proses dengan deteksi di bawah ini
+  if (previewInterval) { clearInterval(previewInterval); previewInterval = null; }
   document.getElementById('statusDaftar').innerText = 'Mendeteksi wajah...';
 
-  const detection = await faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.5 }))
-    .withFaceLandmarks().withFaceDescriptor();
+  try {
+    const detection = await Promise.race([
+      faceapi.detectSingleFace(video, new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.5 }))
+        .withFaceLandmarks().withFaceDescriptor(),
+      new Promise((_, reject) => setTimeout(() => reject(new Error('timeout')), 8000))
+    ]);
 
-  if (!detection) {
-    document.getElementById('statusDaftar').innerText = 'Wajah tidak terdeteksi, coba lagi.';
-    return;
+    if (!detection) {
+      document.getElementById('statusDaftar').innerText = 'Wajah tidak terdeteksi, coba lagi.';
+      return;
+    }
+
+    const deskriptorArray = Array.from(detection.descriptor);
+    const res = await fetch(API_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'text/plain' },
+      body: JSON.stringify({ action: 'daftar', nama: nama, deskriptor: deskriptorArray })
+    });
+    const hasil = await res.json();
+    document.getElementById('statusDaftar').innerText = 'Berhasil daftar: ' + hasil.nama;
+    document.getElementById('namaBaru').value = '';
+  } catch (err) {
+    document.getElementById('statusDaftar').innerText = err.message === 'timeout'
+      ? 'Deteksi terlalu lama, coba lagi (pastikan wajah jelas & cahaya cukup).'
+      : 'Gagal: ' + err.message;
+  } finally {
+    loopPreviewDaftar(); // aktifkan lagi preview
   }
-
-  const deskriptorArray = Array.from(detection.descriptor);
-  const res = await fetch(API_URL, {
-    method: 'POST',
-    headers: { 'Content-Type': 'text/plain' },
-    body: JSON.stringify({ action: 'daftar', nama: nama, deskriptor: deskriptorArray })
-  });
-  const hasil = await res.json();
-  document.getElementById('statusDaftar').innerText = 'Berhasil daftar: ' + hasil.nama;
-  document.getElementById('namaBaru').value = '';
 }
 
 window.onload = init;
