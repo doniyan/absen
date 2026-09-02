@@ -201,7 +201,7 @@
 
     <script>
         // GANTI dengan URL Web App Google Apps Script kamu (diakhiri /exec)
-        const API_URL = 'https://script.google.com/macros/s/AKfycbyAouTTJhCjTdwyYRqt9IX5xsfCwWn-p93aCdFSELFLJjxNoqNk1YUCRPooeRP96G9OSQ/exec';
+        const API_URL = 'https://script.google.com/macros/s/AKfycbwm3awHy2M-DDHv6XfsPlowrhIpXsKuG33EwsaK5Y6ALvcLFF69qBzHuQldWPUrFhRuSg/exec';
 
         let registeredUsers = [];
         let attendanceLogs = [];
@@ -228,43 +228,17 @@
         }
 
         let _pendingPostResolve = null;
-        window.addEventListener('message', (event) => {
-            if (!_pendingPostResolve) return;
-            try {
-                const result = JSON.parse(event.data);
-                _pendingPostResolve(result);
-                _pendingPostResolve = null;
-            } catch (e) { /* bukan pesan untuk kita, abaikan */ }
-        });
 
-        function postViaForm(fields) {
-            return new Promise((resolve, reject) => {
-                const timeout = setTimeout(() => { _pendingPostResolve = null; reject(new Error('Waktu habis, cek koneksi internet')); }, 20000);
-                _pendingPostResolve = (result) => { clearTimeout(timeout); resolve(result); };
-
-                let iframe = document.getElementById('hidden-post-frame');
-                if (!iframe) {
-                    iframe = document.createElement('iframe');
-                    iframe.id = 'hidden-post-frame';
-                    iframe.name = 'hidden-post-frame';
-                    iframe.style.display = 'none';
-                    document.body.appendChild(iframe);
-                }
-                const form = document.createElement('form');
-                form.method = 'POST';
-                form.action = API_URL;
-                form.target = 'hidden-post-frame';
-                Object.keys(fields).forEach(key => {
-                    const input = document.createElement('input');
-                    input.type = 'hidden';
-                    input.name = key;
-                    input.value = fields[key] == null ? '' : fields[key];
-                    form.appendChild(input);
-                });
-                document.body.appendChild(form);
-                form.submit();
-                form.remove();
+        /** Kirim POST tanpa bisa baca balasannya (batasan no-cors), lalu beri jeda agar server sempat memproses */
+        async function postNoCors(fields) {
+            const body = new URLSearchParams(fields).toString();
+            await fetch(API_URL, {
+                method: 'POST',
+                mode: 'no-cors',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body
             });
+            await new Promise(r => setTimeout(r, 1200)); // beri waktu Apps Script menulis ke Sheet
         }
         // ---- akhir bagian komunikasi ----
 
@@ -352,11 +326,15 @@
             const btn = document.getElementById('btn-submit-register');
             btn.disabled = true; btn.innerText = 'Menyimpan...';
             try {
-                const hasil = await postViaForm({ action: 'register', id, nama: name, dept, pin, foto: currentCapturedImage });
-                if (hasil.status === 'gagal') { showToast('Error', hasil.pesan, 'error'); return; }
+                await postNoCors({ action: 'register', id, nama: name, dept, pin, foto: currentCapturedImage });
+                await loadUsers();
+                const berhasil = registeredUsers.some(u => u.id === id);
+                if (!berhasil) {
+                    showToast('Gagal', 'Pendaftaran tidak tersimpan. Cek lagi ID (mungkin sudah dipakai) dan PIN (minimal 4 digit).', 'error');
+                    return;
+                }
                 document.getElementById('form-register').reset();
                 recaptureFace();
-                await loadUsers();
                 showToast('Berhasil', `${name} berhasil didaftarkan. Sampaikan PIN ke yang bersangkutan secara pribadi.`, 'success');
             } catch (err) {
                 showToast('Error', 'Gagal menyimpan: ' + err.message, 'error');
@@ -400,9 +378,10 @@
         async function deleteUser(id) {
             if (!confirm('Hapus data karyawan ini?')) return;
             try {
-                const hasil = await postViaForm({ action: 'hapusUser', id });
-                if (hasil.status === 'gagal') { showToast('Error', hasil.pesan, 'error'); return; }
+                await postNoCors({ action: 'hapusUser', id });
                 await loadUsers();
+                const masihAda = registeredUsers.some(u => u.id === id);
+                if (masihAda) { showToast('Gagal', 'Data belum terhapus, coba lagi.', 'error'); return; }
                 showToast('Terhapus', 'Data karyawan berhasil dihapus.', 'success');
             } catch (err) { showToast('Error', 'Gagal menghapus: ' + err.message, 'error'); }
         }
@@ -419,11 +398,16 @@
             const foto = _snapshot('webcam', 0.6);
 
             try {
-                const hasil = await postViaForm({ action: 'absensi', id, pin, foto });
-                if (hasil.status === 'gagal') { showToast('Absen Gagal', hasil.pesan, 'error'); pinInput.value = ''; return; }
+                await postNoCors({ action: 'absensi', id, pin, foto });
                 await loadReports();
-                appendLiveLog({ name: matchedUser.nama, dept: matchedUser.dept, time: hasil.waktu, status: hasil.jenis });
-                showToast('Absensi Berhasil', `${matchedUser.nama} - ${hasil.jenis} (${hasil.waktu})`, 'success');
+                const terbaru = attendanceLogs[0];
+                if (!terbaru || terbaru.id !== id) {
+                    showToast('Absen Gagal', 'Tidak tersimpan — kemungkinan PIN salah, coba lagi.', 'error');
+                    pinInput.value = '';
+                    return;
+                }
+                appendLiveLog({ name: matchedUser.nama, dept: matchedUser.dept, time: terbaru.waktu, status: terbaru.jenis });
+                showToast('Absensi Berhasil', `${matchedUser.nama} - ${terbaru.jenis} (${terbaru.waktu})`, 'success');
                 select.value = ''; pinInput.value = '';
             } catch (err) {
                 showToast('Error', 'Gagal mencatat absen: ' + err.message, 'error');
