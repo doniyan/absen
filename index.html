@@ -201,12 +201,72 @@
 
     <script>
         // GANTI dengan URL Web App Google Apps Script kamu (diakhiri /exec)
-        const API_URL = 'https://script.google.com/macros/s/AKfycbzpO7psfiI1rDjbml6DiKIW9ShpYTdeiwwkge0TEbSPEoO6hJN2j-HbuRxkB3rKLy1pVQ/exec';
+        const API_URL = 'https://script.google.com/macros/s/AKfycbyAouTTJhCjTdwyYRqt9IX5xsfCwWn-p93aCdFSELFLJjxNoqNk1YUCRPooeRP96G9OSQ/exec';
 
         let registeredUsers = [];
         let attendanceLogs = [];
         let currentCapturedImage = null;
         let sharedStream = null;
+
+        // ---- Komunikasi anti-CORS: JSONP untuk baca data, form+iframe untuk kirim data ----
+        let _jsonpCounter = 0;
+        function jsonpGet(action) {
+            return new Promise((resolve, reject) => {
+                const cbName = '_jsonp_cb_' + (_jsonpCounter++);
+                const script = document.createElement('script');
+                const timeout = setTimeout(() => { cleanup(); reject(new Error('Waktu habis, cek koneksi internet')); }, 15000);
+                function cleanup() {
+                    clearTimeout(timeout);
+                    delete window[cbName];
+                    script.remove();
+                }
+                window[cbName] = (data) => { cleanup(); resolve(data); };
+                script.src = API_URL + '?action=' + action + '&callback=' + cbName;
+                script.onerror = () => { cleanup(); reject(new Error('Gagal memuat dari server')); };
+                document.body.appendChild(script);
+            });
+        }
+
+        let _pendingPostResolve = null;
+        window.addEventListener('message', (event) => {
+            if (!_pendingPostResolve) return;
+            try {
+                const result = JSON.parse(event.data);
+                _pendingPostResolve(result);
+                _pendingPostResolve = null;
+            } catch (e) { /* bukan pesan untuk kita, abaikan */ }
+        });
+
+        function postViaForm(fields) {
+            return new Promise((resolve, reject) => {
+                const timeout = setTimeout(() => { _pendingPostResolve = null; reject(new Error('Waktu habis, cek koneksi internet')); }, 20000);
+                _pendingPostResolve = (result) => { clearTimeout(timeout); resolve(result); };
+
+                let iframe = document.getElementById('hidden-post-frame');
+                if (!iframe) {
+                    iframe = document.createElement('iframe');
+                    iframe.id = 'hidden-post-frame';
+                    iframe.name = 'hidden-post-frame';
+                    iframe.style.display = 'none';
+                    document.body.appendChild(iframe);
+                }
+                const form = document.createElement('form');
+                form.method = 'POST';
+                form.action = API_URL;
+                form.target = 'hidden-post-frame';
+                Object.keys(fields).forEach(key => {
+                    const input = document.createElement('input');
+                    input.type = 'hidden';
+                    input.name = key;
+                    input.value = fields[key] == null ? '' : fields[key];
+                    form.appendChild(input);
+                });
+                document.body.appendChild(form);
+                form.submit();
+                form.remove();
+            });
+        }
+        // ---- akhir bagian komunikasi ----
 
         window.addEventListener('DOMContentLoaded', () => {
             updateDateLabel();
@@ -292,11 +352,7 @@
             const btn = document.getElementById('btn-submit-register');
             btn.disabled = true; btn.innerText = 'Menyimpan...';
             try {
-                const res = await fetch(API_URL, {
-                    method: 'POST', headers: { 'Content-Type': 'text/plain' },
-                    body: JSON.stringify({ action: 'register', id, nama: name, dept, pin, foto: currentCapturedImage })
-                });
-                const hasil = await res.json();
+                const hasil = await postViaForm({ action: 'register', id, nama: name, dept, pin, foto: currentCapturedImage });
                 if (hasil.status === 'gagal') { showToast('Error', hasil.pesan, 'error'); return; }
                 document.getElementById('form-register').reset();
                 recaptureFace();
@@ -312,8 +368,7 @@
 
         async function loadUsers() {
             try {
-                const res = await fetch(API_URL + '?action=getUsers');
-                registeredUsers = await res.json();
+                registeredUsers = await jsonpGet('getUsers');
                 renderRegisteredUsers();
                 renderScanSelect();
             } catch (err) { showToast('Error', 'Gagal memuat data: ' + err.message, 'error'); }
@@ -345,8 +400,7 @@
         async function deleteUser(id) {
             if (!confirm('Hapus data karyawan ini?')) return;
             try {
-                const res = await fetch(API_URL, { method: 'POST', headers: { 'Content-Type': 'text/plain' }, body: JSON.stringify({ action: 'hapusUser', id }) });
-                const hasil = await res.json();
+                const hasil = await postViaForm({ action: 'hapusUser', id });
                 if (hasil.status === 'gagal') { showToast('Error', hasil.pesan, 'error'); return; }
                 await loadUsers();
                 showToast('Terhapus', 'Data karyawan berhasil dihapus.', 'success');
@@ -365,11 +419,7 @@
             const foto = _snapshot('webcam', 0.6);
 
             try {
-                const res = await fetch(API_URL, {
-                    method: 'POST', headers: { 'Content-Type': 'text/plain' },
-                    body: JSON.stringify({ action: 'absensi', id, pin, foto })
-                });
-                const hasil = await res.json();
+                const hasil = await postViaForm({ action: 'absensi', id, pin, foto });
                 if (hasil.status === 'gagal') { showToast('Absen Gagal', hasil.pesan, 'error'); pinInput.value = ''; return; }
                 await loadReports();
                 appendLiveLog({ name: matchedUser.nama, dept: matchedUser.dept, time: hasil.waktu, status: hasil.jenis });
@@ -396,8 +446,7 @@
 
         async function loadReports() {
             try {
-                const res = await fetch(API_URL + '?action=getLogs');
-                attendanceLogs = await res.json();
+                attendanceLogs = await jsonpGet('getLogs');
                 renderReports();
                 updateStats();
             } catch (err) { showToast('Error', 'Gagal memuat laporan: ' + err.message, 'error'); }
